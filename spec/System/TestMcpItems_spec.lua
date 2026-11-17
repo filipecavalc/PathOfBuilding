@@ -165,6 +165,17 @@ describe("MCP items tools", function()
 			callTool("items_equip", { action = "set_active", slot = "Flask 1", active = false })
 			assert.is_falsy(build.calcsTab.mainEnv.flasks[flask])
 		end)
+
+		it("simulates a new flask switched on in place of the equipped one", function()
+			callTool("items_equip", { action = "equip", slot = "Flask 1", item = FLASK })
+			callTool("items_equip", { action = "set_active", slot = "Flask 1", active = false })
+			local granite = "Rarity: NORMAL\nGranite Flask\nQuality: 0"
+			local off = callTool("simulate", { slot = "Flask 1", item = granite, fields = { "Armour" } })
+			local on = callTool("simulate", { slot = "Flask 1", item = granite, toggle_flask = 1, fields = { "Armour" } })
+			assert.are.equals("switch on Granite Flask", on.simulated[2])
+			assert.is_true(on.values.Armour.after > off.values.Armour.after)
+			toolError("simulate", { slot = "Flask 1", remove_item = true, toggle_flask = 1 })
+		end)
 	end)
 
 	describe("items_sets", function()

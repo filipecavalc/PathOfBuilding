@@ -787,7 +787,7 @@ T.Tool {
 		remove_item = { type = "boolean", description = "Simulate removing the item in 'slot'." },
 		add_nodes = { type = "array", items = { type = { "string", "integer" } }, maxItems = 50, description = "Passive nodes to allocate (names or ids)." },
 		remove_nodes = { type = "array", items = { type = { "string", "integer" } }, maxItems = 50, description = "Allocated passive nodes to remove (with the nodes that depend on them)." },
-		toggle_flask = { type = "integer", minimum = 1, maximum = 5, description = "Flask slot number to switch on or off." },
+		toggle_flask = { type = "integer", minimum = 1, maximum = 5, description = "Flask slot number to switch on or off. With 'item' in that slot, the new flask is switched." },
 		fields = { type = "array", items = { type = "string" }, maxItems = 100, description = "Output fields to report before/after (default: key offence and defence fields)." },
 	},
 	run = function(args)
@@ -854,12 +854,23 @@ T.Tool {
 		end
 		if args.toggle_flask then
 			local slot = itemsTab.slots["Flask " .. args.toggle_flask]
-			local flask = slot and itemsTab.items[slot.selItemId]
+			local flask, active
+			if slot and override.repSlotName == slot.slotName then
+				-- The flask given in 'item' replaces this one: switch the new flask, which takes over the slot's on/off state
+				flask = override.repItem
+				if not flask then
+					T.Fail("Flask %d is being removed, so there is no flask to switch.", args.toggle_flask)
+				end
+				active = slot.active
+			else
+				flask = slot and itemsTab.items[slot.selItemId]
+				active = flask and build.calcsTab.mainEnv.flasks[flask]
+			end
 			if not flask then
 				T.Fail("No flask is equipped in Flask %d.", args.toggle_flask)
 			end
 			override.toggleFlask = flask
-			t_insert(described, (build.calcsTab.mainEnv.flasks[flask] and "switch off " or "switch on ") .. flask.name)
+			t_insert(described, (active and "switch off " or "switch on ") .. flask.name)
 		end
 		if not described[1] then
 			T.Fail("Nothing to simulate: give item/remove_item with slot, add_nodes, remove_nodes or toggle_flask.")
