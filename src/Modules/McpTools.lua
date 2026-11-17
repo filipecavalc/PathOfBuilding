@@ -573,6 +573,7 @@ M.instructions = table.concat({
 	"All numbers come from Path of Building's own calculations for the open build.",
 	"Start with app_status. Read before you change: build_stats, tree_get, items_get, skills_get, config_get.",
 	"Use simulate to measure a change (an item, passives, masteries, a flask) without touching the build.",
+	"To price an item the user wants to sell, pass its text to trade_price (it needs the Path of Exile login, not a build).",
 	"Changes made here show in the window and mark the build as unsaved; only build_save writes files.",
 	"Never discard the user's unsaved work unless they agreed. Tools that need a dialog refuse while the user has one open.",
 }, " ")

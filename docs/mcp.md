@@ -43,10 +43,11 @@ so you can see what a client did.
   existing file unless told to.
 - Tools that use one of Path of Building's dialogs to do their work (timeless jewel finder, tattoos, crafting) close it and
   put back what they changed in it.
-- `import_character` and `trade_search` use the Path of Exile login you set up in *Import/Export*; the token never leaves
-  Path of Building. `trade_search` runs the trader's searches through Path of Building's own request queue and rate limits
-  and only reads listings: nothing is bought or sent to sellers. Build links are downloaded by Path of Building itself.
-  Nothing is uploaded.
+- `import_character`, `trade_search` and `trade_price` use the Path of Exile login you set up in *Import/Export*; the
+  token never leaves Path of Building. `trade_search` runs the trader's searches through Path of Building's own request
+  queue and rate limits and only reads listings: nothing is bought or sent to sellers. `trade_price` does the same, runs
+  at most three searches per item, and converts prices with the official Currency Exchange rates Path of Building
+  downloads (kept for an hour). Build links are downloaded by Path of Building itself. Nothing is uploaded.
 
 ## Tools
 
@@ -78,6 +79,7 @@ Tools are grouped by the part of the window they work on. Read-only tools are ma
 | | `items_craft` | Build an item with PoB's crafting and return its text |
 | Trade | `trade_query` | The weighted trade search PoB's trader generates for a slot or unique row, as a link |
 | | `trade_search` | Runs that search (or a trade link) and returns listings with prices, measured on the build |
+| | `trade_price` | Prices a pasted item for selling: searches comparable Instant Buyout listings and returns a quick sale, fair and ceiling price (no build needed) |
 | Skills | `skills_get` | Socket groups, gems, main skill, skill sets |
 | | `skills_edit` | Add or change gems and groups, main skill, skill sets |
 | | `skills_rank_supports` | Support gems ranked by damage for a group |
@@ -110,6 +112,7 @@ open build's XML as the resource `pob://build/current.xml`.
 | `src/Modules/McpServer.lua` | LuaSocket listener polled from `main:OnFrame`, settings and the settings dialog. |
 | `src/Modules/McpTools.lua` | The tool framework, prompts and resources. |
 | `src/Modules/McpTools/*.lua` | The tools, one file per area of the window. |
+| `src/Modules/McpPricing.lua` | `trade_price`'s pricing: reads the item, picks what drives its price, builds the searches, summarises listings. No requests. |
 
 **Protocol.** One endpoint, `POST /mcp`, answered with `application/json` (no SSE stream). It serves protocol version
 2026-07-28 (stateless: version and client capabilities in every request's `_meta` and headers, `server/discover`) and the
@@ -128,4 +131,4 @@ side-bar stats. Return names people understand, with ids only where a follow-up 
 
 **Tests.** `spec/System/TestMcp*_spec.lua` drive the protocol and the tools headless (`docker-compose up`, or
 `busted --lua=luajit -p TestMcp`). The socket layer and anything using `Deflate`/`Inflate` (build codes) need the real
-application.
+application. Lua changes need Path of Building restarted, and the MCP client reconnected, to take effect.

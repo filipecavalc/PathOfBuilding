@@ -606,3 +606,415 @@ T.Tool {
 		end, timeout)
 	end,
 }
+
+------------------------------------------------------------------------------
+-- trade_price
+------------------------------------------------------------------------------
+
+local pricing = LoadModule("Modules/McpPricing")
+local priceCount = 0
+-- Shared by every trade_price call: the rate limits it has seen, and the currency rates (kept an hour).
+local priceLimiter
+local priceRates = { pbCurrencyConversion = { }, controls = { } }
+function priceRates:SetNotice(_, message)
+	self.lastError = message
+end
+
+local function tradeQueryClass()
+	if not common.classes.TradeQuery then
+		LoadModule("Classes/TradeQuery")
+	end
+	return common.classes.TradeQuery
+end
+
+-- Chaos per unit of each currency, from the Currency Exchange rates PoB downloads.
+local function chaosRates(realm, league, fallbackDivine)
+	local realmRates = priceRates.pbCurrencyConversion[realm]
+	local map = realmRates and league and realmRates[league]
+	if type(map) == "table" and map.chaos and map.chaos > 0 then
+		local rates = { }
+		for currency, divines in pairs(map) do
+			if type(divines) == "number" then
+				rates[currency] = divines / map.chaos
+			end
+		end
+		return rates, "currency-exchange", 1 / map.chaos
+	end
+	if fallbackDivine then
+		return { chaos = 1, divine = fallbackDivine }, "argument", fallbackDivine
+	end
+	return { chaos = 1 }, "none", nil
+end
+
+local function priceIn(chaos, chaosPerDivine)
+	if not chaos then
+		return nil
+	end
+	local divine
+	if chaosPerDivine then
+		divine = chaos / chaosPerDivine
+		divine = divine >= 0.01 and T.Round(divine, divine >= 0.8 and 1 or 2) or nil
+	end
+	return { chaos = pricing.roundChaos(chaos), divine = divine }
+end
+
+local function isChallengeLeague(id)
+	return not (id:match("Standard") or id:match("Hardcore") or id:match("SSF") or id:match("Ruthless") or id:match("HC"))
+end
+
+T.Tool {
+	name = "trade_price",
+	title = "Price an item on the trade site",
+	description = "Prices an item pasted from the game (Ctrl+Alt+C text) for selling it: reads it with Path of Building, picks what "
+		.. "drives its price (life and resistance totals, valuable mods, weapon DPS, defences, item level and influence for craft "
+		.. "bases, the rolls of a unique), searches the trade site for comparable Instant Buyout listings, loosens or tightens the "
+		.. "search when it finds too few or too many cheap ones (at most 3 searches), and summarises the 20 cheapest: quick sale, "
+		.. "fair and ceiling prices in chaos and divines (Currency Exchange rates), with a confidence and why. Needs Path of "
+		.. "Building to be logged in to Path of Exile (Import/Export tab) but no build. Only reads listings: nothing is bought, "
+		.. "posted or sent to sellers. Gems, currency, divination cards, fragments and maps come back as verdict 'bulk' with what "
+		.. "to look up on poe.ninja, without searching. Verdict 'cheap' means it sells for a few chaos at most.",
+	readOnly = true,
+	openWorld = true,
+	needsBuild = false,
+	input = {
+		item = { type = "string", maxLength = 20000, description = "The item text as copied in the game with Ctrl+Alt+C (Ctrl+C also works, without tiers)." },
+		league = { type = "string", maxLength = 100, description = "Trade league (default: the current challenge league from the trade site)." },
+		realm = { type = "string", enum = { "pc", "xbox", "sony" }, description = "Trade realm (default pc)." },
+		status = { type = "string", enum = { "securable", "available", "any" }, description = "Listings to search: securable = Instant Buyout (default; 'online' is not offered because it hides Merchant's Tab listings), available = Instant Buyout and in person, any." },
+		max_searches = { type = "integer", minimum = 1, maximum = 3, description = "Most searches to run (default 3)." },
+		stats = statFilterList("Search on these trade stat ids instead of the automatic choice, with optional minimums."),
+		drop = { type = "array", maxItems = 6, items = { type = "string" }, description = "Drivers to leave out of the search, by key or trade stat id (as in the drivers of a previous answer)." },
+		query = { type = "object", description = "A ready trade site query (the object the trade site sends as 'query'); skips the automatic search and runs it once." },
+		chaos_per_divine = { type = "number", minimum = 1, description = "Divine price in chaos to use if the Currency Exchange rates cannot be downloaded." },
+		listings = { type = "integer", minimum = 0, maximum = 20, description = "Cheapest listings to return (default 8)." },
+		dry_run = { type = "boolean", description = "Only read the item and return the search it would run, without contacting the trade site." },
+	},
+	run = function(args)
+		if not args.item and not args.query then
+			T.Fail("Pass item (the text copied in the game with Ctrl+Alt+C) or a query.")
+		end
+		if args.stats then
+			tradeStatFilters(args.stats, "stats")
+		end
+		local desc, plan
+		if args.item then
+			local message
+			desc, message = pricing.describe(args.item)
+			if not desc then
+				T.Fail("%s", message)
+			end
+			if desc.verdict == "bulk" then
+				return {
+					verdict = "bulk",
+					item = { class = desc.class, rarity = desc.rarity },
+					bulk = desc.bulk,
+					notes = T.Array({ "Bulk items are priced by their market (poe.ninja, the in-game Currency Exchange), not by trade site listings; nothing was searched." }),
+				}
+			end
+			plan = pricing.plan(desc, { status = args.status, stats = args.stats, drop = args.drop })
+		end
+		local first
+		if args.query then
+			local query = copyTable(args.query)
+			query.status = query.status or { option = args.status or "securable" }
+			if not query.stats or not query.stats[1] then
+				query.stats = { { type = "and", filters = { } } }
+			end
+			first = { step = "query", drivers = { }, query = query }
+		else
+			first = pricing.firstSearch(plan)
+		end
+		if args.dry_run then
+			return {
+				item = desc and pricing.itemSummary(desc),
+				drivers = plan and T.Array(pricing.driverSummary(plan.drivers, first.drivers)) or nil,
+				query = first.query,
+			}
+		end
+		local api = main.api
+		if not api or not api.authToken then
+			T.Fail("Path of Building is not logged in to Path of Exile, which the trade site search needs. Ask the user to log in "
+				.. "from the Import/Export tab ('Authorize with Path of Exile').")
+		end
+		local realm = args.realm or "pc"
+		local maxSearches = args.max_searches or pricing.MAX_SEARCHES
+		local listingCount = args.listings or 8
+
+		-- The rate limits are shared with the trader when a build is open.
+		local okBuild, build = pcall(T.Build)
+		local tradeQuery = okBuild and build and build.itemsTab and build.itemsTab.tradeQuery
+		local limiter = tradeQuery and tradeQuery.tradeQueryRequests and tradeQuery.tradeQueryRequests.rateLimiter
+		if not limiter then
+			priceLimiter = priceLimiter or new("TradeQueryRateLimiter"):TradeQueryRateLimiter()
+			limiter = priceLimiter
+		end
+		local requests = new("TradeQueryRequests"):TradeQueryRequests(limiter)
+
+		return T.Defer(function(resolve)
+			priceCount = priceCount + 1
+			local frameKey = "McpTradePrice" .. priceCount
+			local startTime = os.time()
+			local deadline = startTime + 85
+			local ratesDeadline = startTime + 10
+			local league = args.league
+			local searches, results = { }, { }
+			local relaxed = 0
+			local pending, finished, longWait
+			local notes = { }
+
+			local function stop()
+				main.onFrameFuncs[frameKey] = nil
+				requests.requestQueue.search, requests.requestQueue.fetch = { }, { }
+			end
+			local function finish(fn)
+				if finished then
+					return
+				end
+				finished = true
+				stop()
+				T.Settle(resolve, fn)
+			end
+
+			local function buildResult()
+				local rates, rateSource, chaosPerDivine = chaosRates(realm, league, args.chaos_per_divine)
+				if rateSource == "none" then
+					t_insert(notes, "The Currency Exchange rates could not be downloaded and no chaos_per_divine was given: only listings priced in chaos were counted.")
+				elseif rateSource == "argument" then
+					t_insert(notes, "The Currency Exchange rates could not be downloaded: chaos_per_divine was used.")
+				end
+				-- The search to report: the last one that found enough comparable listings; a tightened
+				-- search that found fewer than 5 is ignored in favour of the broader one before it.
+				local chosen
+				for _, r in ipairs(results) do
+					local tightened = r.search.step:match("^tightened") ~= nil
+					if r.total > 0 and not (tightened and r.total < 5 and chosen) then
+						chosen = r
+					end
+				end
+				local out = {
+					league = league,
+					realm = realm,
+					item = desc and pricing.itemSummary(desc),
+					drivers = plan and T.Array(pricing.driverSummary(plan.drivers, chosen and chosen.search.drivers or first.drivers)) or nil,
+					searches = T.Array(searches),
+					rate = { chaosPerDivine = chaosPerDivine and T.Round(chaosPerDivine, 1), source = rateSource },
+				}
+				if not chosen then
+					out.verdict = "no_data"
+					t_insert(notes, "No comparable listings were found: the search may be too strict (try drop), or the item may need a manual check.")
+					out.notes = T.Array(notes)
+					return out
+				end
+				local summary = pricing.summarise(chosen.listings, rates, chosen.total, relaxed)
+				out.verdict = pricing.isCheap(summary) and "cheap" or "price"
+				if summary.fair then
+					out.price = {
+						quick = priceIn(summary.quick, chaosPerDivine),
+						fair = priceIn(summary.fair, chaosPerDivine),
+						ceiling = priceIn(summary.ceiling, chaosPerDivine),
+					}
+				end
+				out.confidence = summary.confidence
+				out.why = summary.why and summary.why[1] and T.Array(summary.why) or nil
+				out.basedOn = chosen.search.step
+				out.market = {
+					total = chosen.total, fetched = summary.fetched, accounts = summary.accounts, fresh = summary.fresh,
+					stale = summary.stale, lowOutliers = summary.lowOutliers, walls = summary.walls[1] and T.Array(summary.walls) or nil,
+					min = summary.min and T.Round(summary.min, 1), p25 = summary.p25 and T.Round(summary.p25, 1),
+					median = summary.median and T.Round(summary.median, 1), p75 = summary.p75 and T.Round(summary.p75, 1),
+					skippedCurrencies = summary.skippedCurrencies,
+				}
+				local sorted = { }
+				for _, l in ipairs(chosen.listings) do
+					-- The rates summarise used: a listing in a currency they lack is left out here too.
+					l.chaos = rates[l.currency] and l.amount * rates[l.currency] or nil
+					if l.chaos then
+						t_insert(sorted, l)
+					end
+				end
+				table.sort(sorted, function(a, b) return a.chaos < b.chaos end)
+				local cheapest = { }
+				for i = 1, math.min(listingCount, #sorted) do
+					local l = sorted[i]
+					t_insert(cheapest, T.Array({ T.Round(l.chaos, 1), l.hours and T.Round(l.hours, 0) or false, l.account }))
+				end
+				out.cheapest = T.Array(cheapest)
+				if desc and not desc.advanced then
+					t_insert(notes, "The item was copied without Ctrl+Alt+C, so tiers and rolls are unknown and only the totals guided the search.")
+				end
+				out.notes = notes[1] and T.Array(notes) or nil
+				return out
+			end
+
+			local runSearch
+			local function decide()
+				local p = pending
+				pending = nil
+				local now = os.time()
+				local listings = { }
+				for _, entry in ipairs(p.entries) do
+					local l = pricing.parseListing(entry, now)
+					if l then
+						t_insert(listings, l)
+					end
+				end
+				local summary = pricing.summarise(listings, chaosRates(realm, league, args.chaos_per_divine), p.total, relaxed)
+				t_insert(results, { search = p.search, total = p.total, listings = listings })
+				t_insert(searches, { step = p.search.step, total = p.total, url = p.url })
+				local nextSearch
+				if plan and not args.query and #searches < maxSearches then
+					nextSearch = pricing.nextSearch(plan, p.search, p.total, summary, #searches)
+				end
+				if nextSearch then
+					if nextSearch.step:match("^relaxed") then
+						relaxed = relaxed + 1
+					end
+					return runSearch(nextSearch)
+				end
+				finish(buildResult)
+			end
+
+			local function onFetched(search, total, url, entries)
+				pending = { search = search, total = total, url = url, entries = entries }
+			end
+
+			runSearch = function(search)
+				local body = dkjson.encode({ query = search.query, sort = { price = "asc" } })
+				requests:PerformSearch(realm, league, body, function(response, errMsg)
+					if finished then
+						return
+					end
+					if errMsg and errMsg ~= "No Matching Results Found" then
+						if results[1] then
+							t_insert(notes, "A later search failed (" .. tostring(errMsg) .. "); the answer uses the earlier ones.")
+							return finish(buildResult)
+						end
+						return finish(function()
+							T.Fail("The trade site search failed: %s", tostring(errMsg))
+						end)
+					end
+					local total = response and response.total or 0
+					local ids = response and response.result or { }
+					local url = response and response.id and requests:buildUrl(requests.hostName .. "trade/search", realm, league, response.id)
+					if not ids[1] then
+						return onFetched(search, total, url, { })
+					end
+					local wanted = math.min(#ids, pricing.FETCH_COUNT)
+					local entries, blocks, done = { }, 0, 0
+					for first = 1, wanted, 10 do
+						blocks = blocks + 1
+						local last = math.min(first + 9, wanted)
+						local fetchUrl = requests.hostName .. "api/trade/fetch/" .. t_concat({ unpack(ids, first, last) }, ",")
+							.. "?query=" .. response.id .. (realm ~= "pc" and ("&realm=" .. realm) or "")
+						t_insert(requests.requestQueue.fetch, {
+							url = fetchUrl,
+							callback = function(fetchBody, fetchErr)
+								if finished then
+									return
+								end
+								local decoded = not fetchErr and fetchBody and dkjson.decode(fetchBody)
+								if decoded and decoded.result then
+									for _, entry in ipairs(decoded.result) do
+										if type(entry) == "table" then
+											t_insert(entries, entry)
+										end
+									end
+								else
+									t_insert(notes, "Some listings could not be read (" .. tostring(fetchErr or "bad response") .. ").")
+								end
+								done = done + 1
+								if done == blocks then
+									onFetched(search, total, url, entries)
+								end
+							end,
+						})
+					end
+				end)
+			end
+
+			main.onFrameFuncs[frameKey] = function()
+				if finished then
+					return stop()
+				end
+				if os.time() > deadline then
+					if results[1] then
+						t_insert(notes, "The searches took too long; the answer uses the ones that finished.")
+						return finish(buildResult)
+					end
+					return finish(function()
+						T.Fail("The trade site took too long to answer; try again in a minute.")
+					end)
+				end
+				local ok, err = pcall(requests.ProcessQueue, requests, function(wait)
+					if wait > 20 then
+						longWait = wait
+					end
+				end)
+				if not ok then
+					return finish(function()
+						T.Fail("Path of Building's trade requests failed: %s", tostring(err))
+					end)
+				end
+				if longWait then
+					if results[1] then
+						t_insert(notes, s_format("pathofexile.com asked to wait %d seconds before more searches; the answer uses the searches already made.", longWait))
+						return finish(buildResult)
+					end
+					return finish(function()
+						T.Fail("pathofexile.com is rate limiting trade searches; try again in %d seconds.", longWait)
+					end)
+				end
+				if pending then
+					local _, source = chaosRates(realm, league, nil)
+					if source == "currency-exchange" or priceRates.lastError or os.time() >= ratesDeadline then
+						local okDecide, errDecide = pcall(decide)
+						if not okDecide then
+							finish(function()
+								T.Fail("Pricing failed: %s", tostring(errDecide))
+							end)
+						end
+					end
+				end
+			end
+
+			local function start()
+				priceRates.lastError = nil
+				tradeQueryClass().PullCXData(priceRates, realm)
+				runSearch(first)
+			end
+			local function withLeague()
+				if league then
+					return start()
+				end
+				requests:FetchLeagues(realm, function(leagues, errMsg)
+					for _, id in ipairs(leagues or { }) do
+						if isChallengeLeague(id) then
+							league = id
+							break
+						end
+					end
+					if not league then
+						return finish(function()
+							T.Fail("Could not tell the current league%s; pass league.", errMsg and (" (" .. tostring(errMsg) .. ")") or "")
+						end)
+					end
+					start()
+				end)
+			end
+			-- Renew an expired login first, as the Import tab does.
+			if api.refreshToken and api.tokenExpiry and api.tokenExpiry < os.time() then
+				api:ValidateAuth(function(valid, errMsg)
+					if not valid then
+						return finish(function()
+							T.Fail("The Path of Exile login expired and could not be renewed%s; ask the user to log in again from the Import/Export tab.",
+								errMsg and (" (" .. tostring(errMsg) .. ")") or "")
+						end)
+					end
+					withLeague()
+				end)
+			else
+				withLeague()
+			end
+		end, 90)
+	end,
+}

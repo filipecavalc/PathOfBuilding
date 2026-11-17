@@ -9,7 +9,7 @@ local protocol
 local function frameFuncKeys()
 	local keys = { }
 	for key in pairs(main.onFrameFuncs) do
-		if key:match("^McpTradeSearch") then
+		if key:match("^McpTrade") then
 			table.insert(keys, key)
 		end
 	end
@@ -208,5 +208,149 @@ describe("MCP trade tools", function()
 		assert.is_truthy(message:find("ring slot", 1, true))
 		message = toolError("trade_query", { slot = "Helmet", ring_slot = "Ring 1" })
 		assert.is_truthy(message:find("unique rows", 1, true))
+	end)
+	describe("trade_price", function()
+		local RING = table.concat({
+			"Item Class: Rings", "Rarity: Rare", "Miracle Band", "Two-Stone Ring", "--------", "Item Level: 81", "--------",
+			"{ Implicit Modifier — Elemental, Fire, Lightning, Resistance }", "+14(12-16)% to Fire and Lightning Resistances", "--------",
+			"{ Prefix Modifier \"Rotund\" (Tier: 2) — Life }", "+94(85-99) to maximum Life",
+			"{ Prefix Modifier \"Phased\" (Tier: 2) — Defences, Evasion }", "+148(121-150) to Evasion Rating",
+			"{ Suffix Modifier \"of Exile\" (Tier: 2) — Chaos, Resistance }", "+30(26-30)% to Chaos Resistance",
+			"{ Suffix Modifier \"of the Ranger\" (Tier: 1) — Attack }", "+461(351-480) to Accuracy Rating",
+			"{ Suffix Modifier \"of the Lightning\" (Tier: 2) — Elemental, Lightning, Resistance }", "+44(42-45)% to Lightning Resistance",
+		}, "\n")
+		local totals, searchCount
+
+		local function priced(id, amount, currency, account, hoursAgo)
+			return {
+				id = id,
+				item = { rarity = "Rare", name = "Ring " .. id, typeLine = "Two-Stone Ring", ilvl = 80, explicitMods = { { description = "+90 to maximum Life" } } },
+				listing = { price = { amount = amount, currency = currency, type = "~b/o" }, account = { name = account },
+					indexed = os.date("!%Y-%m-%dT%H:%M:%SZ", os.time() - hoursAgo * 3600) },
+			}
+		end
+
+		before_each(function()
+			totals = { 726 }
+			searchCount = 0
+			local fetched = { }
+			for i = 1, 12 do
+				table.insert(fetched, priced("l" .. i, 40 + i * 3, "chaos", "acc" .. i, i))
+			end
+			table.insert(fetched, priced("d", 0.5, "divine", "rich", 2))
+			table.insert(fetched, { id = "noprice", item = { rarity = "Rare" }, listing = { account = { name = "x" } } })
+			launch.DownloadPage = function(_, url, callback, params)
+				table.insert(requests, { url = url, params = params })
+				if url:find("api/trade/search/", 1, true) then
+					searchCount = searchCount + 1
+					local total = totals[math.min(searchCount, #totals)]
+					local ids = { }
+					for i = 1, math.min(total, #fetched) do
+						ids[i] = fetched[i].id
+					end
+					callback({ header = "HTTP/1.1 200 OK", body = dkjson.encode({ id = "q" .. searchCount, total = total, result = ids }) })
+				elseif url:find("api/trade/fetch/", 1, true) then
+					local wanted = { }
+					for id in url:match("fetch/([^?]+)"):gmatch("[^,]+") do
+						wanted[id] = true
+					end
+					local out = { }
+					for _, entry in ipairs(fetched) do
+						if wanted[entry.id] then
+							table.insert(out, entry)
+						end
+					end
+					callback({ header = "HTTP/1.1 200 OK", body = dkjson.encode({ result = out }) })
+				else
+					callback(nil, "offline")
+				end
+			end
+		end)
+
+		local function searchBodies()
+			local bodies = { }
+			for _, request in ipairs(requests) do
+				if request.url:find("api/trade/search/", 1, true) then
+					table.insert(bodies, (dkjson.decode(request.params.body)))
+				end
+			end
+			return bodies
+		end
+
+		local function statIds(query)
+			local ids = { }
+			for _, group in ipairs(query.stats) do
+				for _, f in ipairs(group.filters) do
+					ids[f.id] = f.value or true
+				end
+			end
+			return ids
+		end
+
+		it("needs the login, except for bulk items and dry runs", function()
+			api.authToken = nil
+			local message = toolError("trade_price", { item = RING, league = "Covens" })
+			assert.is_truthy(message:find("not logged in", 1, true))
+			local result = callTool("trade_price", { item = "Item Class: Skill Gems\nRarity: Gem\nArc\n--------\nLevel: 20 (Max)\nQuality: +20% (augmented)\n" })
+			assert.are.equals("bulk", result.verdict)
+			assert.are.equals(20, result.bulk.gemLevel)
+			result = callTool("trade_price", { item = RING, dry_run = true })
+			assert.are.equals("accessory.ring", result.query.filters.type_filters.filters.category.option)
+			assert.are.equals(0, #requests)
+			message = toolError("trade_price", { item = "not an item" })
+			assert.is_truthy(message:find("Ctrl+Alt+C", 1, true))
+		end)
+
+		it("prices a rare ring from Instant Buyout listings, without touching the build", function()
+			api.authToken = "test-token"
+			build:ResetModFlags()
+			local result = callTool("trade_price", { item = RING, league = "Covens", chaos_per_divine = 160 })
+			local bodies = searchBodies()
+			assert.are.equals(1, #bodies)
+			local sent = bodies[1]
+			assert.are.same({ price = "asc" }, sent.sort)
+			assert.are.equals("securable", sent.query.status.option)
+			local ids = statIds(sent.query)
+			assert.are.same({ min = 84 }, ids["pseudo.pseudo_total_life"])
+			assert.are.same({ min = 64 }, ids["pseudo.pseudo_total_elemental_resistance"])
+			assert.are.same({ min = 25 }, ids["pseudo.pseudo_total_chaos_resistance"])
+			for _, request in ipairs(requests) do
+				if request.url:find("api/trade/search/", 1, true) or request.url:find("api/trade/fetch/", 1, true) then
+					assert.is_truthy(request.params.header:find("Bearer test-token", 1, true))
+				end
+			end
+			assert.are.equals("price", result.verdict)
+			assert.are.equals(726, result.market.total)
+			assert.are.equals("https://www.pathofexile.com/trade/search/Covens/q1", result.searches[1].url)
+			assert.are.equals("argument", result.rate.source)
+			assert.is_true(result.price.quick.chaos <= result.price.fair.chaos)
+			assert.is_true(result.price.fair.chaos <= result.price.ceiling.chaos)
+			-- The divine listing counts at 80 chaos; the one without a price is left out.
+			assert.are.equals(13, result.market.fetched)
+			assert.is_true(#result.cheapest <= 8)
+			assert.is_false(build.modFlag)
+			assert.are.same({ }, frameFuncKeys())
+		end)
+
+		it("loosens a search that finds too little, at most three times", function()
+			api.authToken = "test-token"
+			totals = { 2, 30 }
+			local result = callTool("trade_price", { item = RING, league = "Covens", chaos_per_divine = 160 })
+			local bodies = searchBodies()
+			assert.are.equals(2, #bodies)
+			local firstIds, secondIds = statIds(bodies[1].query), statIds(bodies[2].query)
+			assert.is_truthy(firstIds["pseudo.pseudo_total_chaos_resistance"])
+			assert.is_nil(secondIds["pseudo.pseudo_total_chaos_resistance"])
+			assert.is_truthy(result.searches[2].step:find("relaxed", 1, true))
+			assert.are.equals(30, result.market.total)
+
+			requests = { }
+			searchCount = 0
+			totals = { 0 }
+			result = callTool("trade_price", { item = RING, league = "Covens", chaos_per_divine = 160 })
+			assert.is_true(#searchBodies() <= 3)
+			assert.are.equals("no_data", result.verdict)
+			assert.are.same({ }, frameFuncKeys())
+		end)
 	end)
 end)
