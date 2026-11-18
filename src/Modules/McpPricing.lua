@@ -202,7 +202,12 @@ local function itemLines(item, headers)
 				if kind == "explicit" then
 					kind = modLine.crafted and "crafted" or modLine.fractured and "fractured" or "explicit"
 				end
-				local header = headers[(source.kind == "implicit" and "implicit|" or "mod|") .. text] or { }
+				-- The copied text shows a roll before any modifier magnitude boost ("— 8% Increased" in its
+				-- header); Path of Building applies the boost, so look the header up by the unboosted text too.
+				local prefix = source.kind == "implicit" and "implicit|" or "mod|"
+				local boosted = modLine.valueScalar and modLine.valueScalar ~= 1
+				local copied = boosted and itemLib.applyRange(modLine.line:gsub("\n", " "), modLine.range) or nil
+				local header = headers[prefix .. text] or (copied and headers[prefix .. copied]) or { }
 				local roll = header.roll
 				if not roll and modLine.range and item.rarity == "UNIQUE" then
 					roll = modLine.range
@@ -216,6 +221,7 @@ local function itemLines(item, headers)
 					affix = header.affix,
 					roll = roll,
 					value = M.lineValue(text),
+					copied = copied ~= text and copied or nil,
 					modLine = modLine,
 				})
 			end
@@ -389,7 +395,15 @@ function M.describe(rawText)
 		end
 	end
 	local weaponData = item.weaponData and item.weaponData[1]
+	local boosted
+	for _, line in ipairs(lines) do
+		if line.copied then
+			boosted = boosted or { }
+			t_insert(boosted, { copied = line.copied, counted = line.text })
+		end
+	end
 	return {
+		boosted = boosted,
 		verdict = "price",
 		item = item,
 		class = itemClass or base.type,
@@ -524,16 +538,27 @@ function M.drivers(desc)
 			end
 		end
 		if localDefence then
-			local best, field, label = 0
+			-- Every defence the base has, in one driver (one of the few filters): a hybrid base is searched
+			-- on both, so the comparable items are hybrids with similar rolls, not pure bases with one big number.
+			local defences = { }
 			for _, entry in ipairs({ { "Armour", "ar", "Armour" }, { "Evasion", "ev", "Evasion" }, { "EnergyShield", "es", "Energy Shield" } }) do
 				local v = desc.armour[entry[1]] or 0
-				if v > best then
-					best, field, label = v, entry[2], entry[3]
+				if v > 0 then
+					t_insert(defences, { value = v, field = entry[2], label = entry[3] })
 				end
 			end
-			if best > 0 then
-				t_insert(drivers, { key = "def_" .. field, filter = "armour", field = field, value = best, min = m_floor(best * 0.9), priority = 2,
-					label = best .. " " .. label })
+			t_sort(defences, function(a, b) return a.value > b.value end)
+			local main = defences[1]
+			if main then
+				local driver = { key = "def_" .. main.field, filter = "armour", field = main.field, value = main.value, min = m_floor(main.value * 0.9),
+					priority = 2, label = main.value .. " " .. main.label }
+				for i = 2, #defences do
+					local def = defences[i]
+					driver.also = driver.also or { }
+					t_insert(driver.also, { field = def.field, value = def.value, min = m_floor(def.value * 0.9) })
+					driver.label = driver.label .. " + " .. def.value .. " " .. def.label
+				end
+				t_insert(drivers, driver)
 			end
 		end
 	end
@@ -678,6 +703,9 @@ function M.buildQuery(desc, drivers, status, scale)
 			local group = d.filter .. "_filters"
 			filters[group] = filters[group] or { filters = { } }
 			filters[group].filters[d.field] = { min = scaledMin(d, scale) }
+			for _, other in ipairs(d.also or { }) do
+				filters[group].filters[other.field] = { min = scaledMin(other, scale) }
+			end
 		elseif d.filter == "misc" then
 			for k, v in pairs(d.misc) do
 				misc()[k] = v
@@ -700,6 +728,83 @@ function M.buildQuery(desc, drivers, status, scale)
 	end
 	query.filters = filters
 	return query
+end
+
+--- Everything a search asks for, one readable line each ("links >= 6", "+# total maximum Life >= 172").
+function M.describeQuery(query)
+	local out = { }
+	if not query then
+		return out
+	end
+	if query.name then
+		t_insert(out, "name: " .. tostring(query.name))
+	end
+	if query.type then
+		t_insert(out, "base: " .. tostring(query.type))
+	end
+	local function value(v)
+		if type(v) ~= "table" then
+			return tostring(v)
+		end
+		if v.option ~= nil then
+			return "= " .. tostring(v.option)
+		end
+		local parts = { }
+		if v.min then
+			t_insert(parts, ">= " .. v.min)
+		end
+		if v.max then
+			t_insert(parts, "<= " .. v.max)
+		end
+		return t_concat(parts, " ")
+	end
+	local groups = { }
+	for name in pairs(query.filters or { }) do
+		t_insert(groups, name)
+	end
+	local order = { type_filters = 1, socket_filters = 2, misc_filters = 3, weapon_filters = 4, armour_filters = 5 }
+	t_sort(groups, function(a, b)
+		local oa, ob = order[a] or 9, order[b] or 9
+		if oa ~= ob then
+			return oa < ob
+		end
+		return a < b
+	end)
+	for _, name in ipairs(groups) do
+		local fields = { }
+		for field in pairs(query.filters[name].filters or { }) do
+			t_insert(fields, field)
+		end
+		t_sort(fields)
+		for _, field in ipairs(fields) do
+			t_insert(out, field .. " " .. value(query.filters[name].filters[field]))
+		end
+	end
+	local texts = tradeStatText()
+	local function statLine(f)
+		local text = texts[f.id] or f.id
+		local v = f.value and value(f.value) or ""
+		return v ~= "" and (text .. " " .. v) or text
+	end
+	for _, group in ipairs(query.stats or { }) do
+		if group.type == "count" then
+			local any = { }
+			for _, f in ipairs(group.filters or { }) do
+				t_insert(any, statLine(f))
+			end
+			if any[1] then
+				t_insert(out, "any of: " .. t_concat(any, " | "))
+			end
+		else
+			for _, f in ipairs(group.filters or { }) do
+				t_insert(out, (group.type == "not" and "not: " or "") .. statLine(f))
+			end
+		end
+	end
+	if query.status and query.status.option then
+		t_insert(out, "status = " .. tostring(query.status.option))
+	end
+	return out
 end
 
 --- A craft base: its value is the base, item level and influence as much as its mods.
@@ -990,7 +1095,7 @@ function M.itemSummary(desc)
 		name = desc.name, base = desc.baseName, class = desc.class, rarity = desc.rarity, ilvl = desc.ilvl,
 		corrupted = desc.corrupted, fractured = desc.fractured or nil, synthesised = desc.synthesised or nil,
 		influences = desc.influences[1] and desc.influences or nil, links = desc.links > 0 and desc.links or nil,
-		open = desc.open, advancedCopy = desc.advanced,
+		open = desc.open, advancedCopy = desc.advanced, boosted = desc.boosted,
 	}
 end
 
@@ -1000,11 +1105,25 @@ function M.driverSummary(drivers, active)
 	for _, d in ipairs(active or { }) do
 		used[d] = true
 	end
-	local out = { }
+	-- A tightening driver is not among the item's drivers; list it when the search used it.
+	local all, listed = { }, { }
 	for _, d in ipairs(drivers) do
+		t_insert(all, d)
+		listed[d] = true
+	end
+	for _, d in ipairs(active or { }) do
+		if not listed[d] then
+			t_insert(all, d)
+		end
+	end
+	local out = { }
+	for _, d in ipairs(all) do
 		local filter
 		if d.filter == "weapon" or d.filter == "armour" then
 			filter = d.field .. ">=" .. d.min
+			for _, other in ipairs(d.also or { }) do
+				filter = filter .. ", " .. other.field .. ">=" .. other.min
+			end
 		elseif d.filter == "misc" then
 			filter = "misc"
 		elseif d.option ~= nil then

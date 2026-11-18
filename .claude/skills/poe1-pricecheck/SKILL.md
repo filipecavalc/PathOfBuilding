@@ -46,7 +46,7 @@ clicar ou copiar anúncios. Nunca chute um preço; se faltar dado, diga o que fa
 - **Faixa:** venda rápida, justo e teto, em chaos, com o equivalente em divine quando passar de ~1 div.
 - **Base:**
   - total de anúncios comparáveis e quantos entraram na conta;
-  - a busca usada (`basedOn`);
+  - a busca usada (`basedOn`) e o que ela exigiu (`filters`: links, corrupção, mínimos);
   - a confiança;
   - o link (`searches[].url`) para o usuário conferir.
 - **Por quê:**
@@ -61,6 +61,12 @@ clicar ou copiar anúncios. Nunca chute um preço; se faltar dado, diga o que fa
 ## Regras
 
 - Só leitura: nunca compre, nunca mande mensagem a vendedor, nunca anuncie.
+- Fale só do que o retorno mostra. `filters` traz tudo o que a busca exigiu: não diga que um filtro faltou sem
+  olhar ali, e não desloque a faixa por palpite ("deve valer mais porque…"). Se achar que algo ficou de fora,
+  diga o que é e ofereça uma busca com `stats` ou `drop`.
+- Os totais vêm do PoB e podem diferir da soma das linhas coladas: um enchant ou implicit de "modifier
+  magnitudes" aumenta os mods, e o texto do Ctrl+Alt+C mostra o valor antes do aumento (`item.boosted` e
+  `notes` dizem quais). Use os números da ferramenta e, se citar uma linha, cite os dois valores.
 - Nunca acesse a API do trade pelo terminal nem por navegador; o acesso é só pelo PoB. Nunca peça cookie,
   token ou senha.
 - O poe.ninja mostra preço pedido, não preço de venda. Para único, o número dele é o piso da variante; o

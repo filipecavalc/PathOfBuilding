@@ -112,6 +112,64 @@ Quality: +20% (augmented)
 Corrupted
 ]]
 
+local COAT = [[Item Class: Body Armours
+Rarity: Rare
+Maelstrom Cloak
+Varnished Coat
+--------
+Quality: +20% (augmented)
+Evasion Rating: 632 (augmented)
+Energy Shield: 162 (augmented)
+--------
+Requirements:
+Level: 62
+Dex: 96
+Int: 96
+--------
+Sockets: B-W-G-W-R-W
+--------
+Item Level: 75
+--------
+8% increased Explicit Life Modifier magnitudes (enchant)
+--------
+{ Prefix Modifier "Abbot's" (Tier: 2) — Life, Defences, Energy Shield  — 8% Increased }
++20(16-25) to maximum Energy Shield
++33(29-33) to maximum Life
+{ Prefix Modifier "Wasp's" (Tier: 3) — Defences, Evasion, Energy Shield }
+30(27-32)% increased Evasion and Energy Shield
+12(12-13)% increased Stun and Block Recovery
+{ Prefix Modifier "Vigorous" (Tier: 3) — Life  — 8% Increased }
++146(145-159) to maximum Life
+{ Suffix Modifier "of Galvanising" (Tier: 3) — Defences, Energy Shield }
+47(43-50)% faster start of Energy Shield Recharge
+{ Suffix Modifier "of the Magma" (Tier: 2) — Elemental, Fire, Resistance }
++43(42-45)% to Fire Resistance
+]]
+
+local BOOTS = [[Item Class: Boots
+Rarity: Rare
+Test Stride
+Fugitive Boots
+--------
+Evasion Rating: 300 (augmented)
+Energy Shield: 60 (augmented)
+--------
+Item Level: 84
+--------
+{ Prefix Modifier "Fleet" (Tier: 1) — Speed }
+30(30-30)% increased Movement Speed
+{ Prefix Modifier "Rotund" (Tier: 2) — Life }
++80(80-89) to maximum Life
+{ Prefix Modifier "Mirage's" (Tier: 1) — Defences, Evasion, Energy Shield }
+110(101-110)% increased Evasion and Energy Shield
+{ Suffix Modifier "of the Volcano" (Tier: 1) — Elemental, Fire, Resistance }
++46(46-48)% to Fire Resistance
+{ Suffix Modifier "of the Ice" (Tier: 1) — Elemental, Cold, Resistance }
++46(46-48)% to Cold Resistance
+{ Suffix Modifier "of Exile" (Tier: 2) — Chaos, Resistance }
++30(26-30)% to Chaos Resistance
+]]
+
 local function filterIds(query)
 	local ids = { }
 	for _, group in ipairs(query.stats) do
@@ -253,6 +311,58 @@ describe("MCP pricing", function()
 		assert.are.equals(2, #second.drivers)
 		-- Two small values left: an 80% search would be the same one again, so stop.
 		assert.is_nil(pricing.nextSearch(plan, second, 1, { }, 2))
+	end)
+
+	it("counts the affixes of mods boosted by a magnitude enchant, and lists every filter of the search", function()
+		local desc = assert(pricing.describe(COAT))
+		-- The copied text shows the rolls before the 8%; the totals include it (157 + 35).
+		assert.are.equals(192, desc.totals.life)
+		assert.are.same({ prefixes = 0, suffixes = 1 }, desc.open)
+		assert.are.equals(6, desc.links)
+		assert.is_truthy(desc.boosted)
+		local copied = { }
+		for _, b in ipairs(desc.boosted) do
+			copied[b.copied] = b.counted
+		end
+		assert.are.equals("+157 to maximum Life", copied["+146 to maximum Life"])
+		local plan = pricing.plan(desc)
+		local first = pricing.firstSearch(plan)
+		local lines = { }
+		for _, line in ipairs(pricing.describeQuery(first.query)) do
+			lines[line] = true
+		end
+		assert.is_true(lines["links >= 6"])
+		assert.is_true(lines["corrupted = false"])
+		assert.is_true(lines["category = armour.chest"])
+		assert.is_true(lines["status = securable"])
+		-- A hybrid base is searched on both of its defences.
+		assert.is_true(lines["ev >= 568"])
+		assert.is_true(lines["es >= 145"])
+		local life
+		for line in pairs(lines) do
+			life = life or line:match("total maximum Life >= (%d+)")
+		end
+		assert.are.equals("172", life)
+		-- A tightening driver shows among the drivers once a search uses it.
+		local tightened = assert(pricing.nextSearch(plan, first, 384, { median = 5 }, 1))
+		local extra = tightened.drivers[#tightened.drivers]
+		local found
+		for _, d in ipairs(pricing.driverSummary(plan.drivers, tightened.drivers)) do
+			found = found or (d.text == extra.label and d.used)
+		end
+		assert.is_true(found)
+	end)
+
+	it("searches a hybrid base on both defences in one filter, keeping room for the resistances", function()
+		local plan = pricing.plan(assert(pricing.describe(BOOTS)))
+		local first = pricing.firstSearch(plan)
+		local armour = first.query.filters.armour_filters.filters
+		assert.is_truthy(armour.ev and armour.ev.min)
+		assert.is_truthy(armour.es and armour.es.min)
+		local ids = filterIds(first.query)
+		assert.are.same({ min = 25 }, ids["pseudo.pseudo_total_chaos_resistance"])
+		assert.is_truthy(ids["pseudo.pseudo_increased_movement_speed"])
+		assert.is_truthy(ids["pseudo.pseudo_total_elemental_resistance"])
 	end)
 
 	it("refuses text that is not an item", function()

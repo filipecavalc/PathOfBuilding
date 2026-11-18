@@ -669,7 +669,8 @@ T.Tool {
 		.. "drives its price (life and resistance totals, valuable mods, weapon DPS, defences, item level and influence for craft "
 		.. "bases, the rolls of a unique), searches the trade site for comparable Instant Buyout listings, loosens or tightens the "
 		.. "search when it finds too few or too many cheap ones (at most 3 searches), and summarises the 20 cheapest: quick sale, "
-		.. "fair and ceiling prices in chaos and divines (Currency Exchange rates), with a confidence and why. Needs Path of "
+		.. "fair and ceiling prices in chaos and divines (Currency Exchange rates), with a confidence and why. 'filters' lists "
+		.. "everything the search used (links, corruption, stat minimums). Needs Path of "
 		.. "Building to be logged in to Path of Exile (Import/Export tab) but no build. Only reads listings: nothing is bought, "
 		.. "posted or sent to sellers. Gems, currency, divination cards, fragments and maps come back as verdict 'bulk' with what "
 		.. "to look up on poe.ninja, without searching. Verdict 'cheap' means it sells for a few chaos at most.",
@@ -728,6 +729,7 @@ T.Tool {
 			return {
 				item = desc and pricing.itemSummary(desc),
 				drivers = plan and T.Array(pricing.driverSummary(plan.drivers, first.drivers)) or nil,
+				filters = T.Array(pricing.describeQuery(first.query)),
 				query = first.query,
 			}
 		end
@@ -800,6 +802,8 @@ T.Tool {
 					rate = { chaosPerDivine = chaosPerDivine and T.Round(chaosPerDivine, 1), source = rateSource },
 				}
 				if not chosen then
+					local last = results[#results]
+					out.filters = last and T.Array(pricing.describeQuery(last.search.query)) or nil
 					out.verdict = "no_data"
 					t_insert(notes, "No comparable listings were found: the search may be too strict (try drop), or the item may need a manual check.")
 					out.notes = T.Array(notes)
@@ -817,6 +821,7 @@ T.Tool {
 				out.confidence = summary.confidence
 				out.why = summary.why and summary.why[1] and T.Array(summary.why) or nil
 				out.basedOn = chosen.search.step
+				out.filters = T.Array(pricing.describeQuery(chosen.search.query))
 				out.market = {
 					total = chosen.total, fetched = summary.fetched, accounts = summary.accounts, fresh = summary.fresh,
 					stale = summary.stale, lowOutliers = summary.lowOutliers, walls = summary.walls[1] and T.Array(summary.walls) or nil,
@@ -841,6 +846,11 @@ T.Tool {
 				out.cheapest = T.Array(cheapest)
 				if desc and not desc.advanced then
 					t_insert(notes, "The item was copied without Ctrl+Alt+C, so tiers and rolls are unknown and only the totals guided the search.")
+				end
+				if desc and desc.boosted then
+					local b = desc.boosted[1]
+					t_insert(notes, s_format("A modifier magnitude boost (enchant or implicit) raises %d mod line(s): the copied text shows them "
+						.. "before the boost, and the totals and filters here include it (e.g. '%s' counts as '%s').", #desc.boosted, b.copied, b.counted))
 				end
 				out.notes = notes[1] and T.Array(notes) or nil
 				return out
