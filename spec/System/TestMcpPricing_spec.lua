@@ -232,6 +232,29 @@ describe("MCP pricing", function()
 		assert.is_nil(pricing.nextSearch(plan, tightened, 3, { median = 2 }, 2))
 	end)
 
+	it("searches a jewel on the mods buyers pay for, and loosens it without cutting small values", function()
+		local JEWEL = table.concat({
+			"Item Class: Jewels", "Rarity: Rare", "Phoenix Shard", "Crimson Jewel", "--------", "Item Level: 81", "--------",
+			"{ Prefix Modifier \"Cerebral\" (Tier: 1) - Mana }", "2(2-3)% increased Mana Reservation Efficiency of Skills",
+			"{ Prefix Modifier \"Carved\" (Tier: 1) - Life }", "12(8-12)% increased Totem Life",
+			"{ Suffix Modifier \"of Acrimony\" (Tier: 1) - Damage }", "+6(4-6)% to Damage over Time Multiplier",
+			"{ Suffix Modifier \"of Infusion\" (Tier: 1) - Life }", "4(4-6)% of Damage taken Recouped as Life",
+		}, "\n")
+		local plan = pricing.plan(assert(pricing.describe(JEWEL)))
+		local keys = { }
+		for _, d in ipairs(plan.active) do
+			keys[d.key] = true
+		end
+		assert.is_nil(keys["#% increased Totem Life"], "totem life does not drive the price")
+		assert.is_true(keys["+#% to Damage over Time Multiplier"])
+		assert.are.equals(3, #plan.active)
+		local first = pricing.firstSearch(plan)
+		local second = pricing.nextSearch(plan, first, 0, { }, 1)
+		assert.are.equals(2, #second.drivers)
+		-- Two small values left: an 80% search would be the same one again, so stop.
+		assert.is_nil(pricing.nextSearch(plan, second, 1, { }, 2))
+	end)
+
 	it("refuses text that is not an item", function()
 		local desc, message = pricing.describe("hello")
 		assert.is_nil(desc)

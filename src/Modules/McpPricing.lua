@@ -88,6 +88,24 @@ local VALUABLE = {
 	["#% increased Elemental Damage with Attack Skills"] = 3,
 }
 
+-- On jewels, the mods buyers pay for besides VALUABLE. Other good tiers only tighten a search.
+local JEWEL_VALUABLE = {
+	["#% increased Mana Reservation Efficiency of Skills"] = 3,
+	["#% of Damage taken Recouped as Life"] = 3,
+	["#% increased Damage over Time"] = 3,
+	["+#% to Critical Strike Multiplier for Spells"] = 3,
+	["+#% to Melee Critical Strike Multiplier"] = 3,
+	["+#% to Critical Strike Multiplier with One Handed Melee Weapons"] = 3,
+	["+#% to Critical Strike Multiplier with Two Handed Melee Weapons"] = 3,
+	["Minions deal #% increased Damage"] = 3,
+	["Minions have #% increased maximum Life"] = 3,
+	["#% increased Attack and Cast Speed"] = 3,
+	["#% increased Maximum Energy Shield"] = 3,
+}
+
+-- Small values drop too much when scaled (80% of 2 is 1): loosen only values at least this big.
+local SCALE_MIN_VALUE = 20
+
 -- Mods that rarely move the price: never a driver, never used to tighten a search.
 local FILLER = {
 	["+# to Accuracy Rating"] = true, ["+# to Evasion Rating"] = true, ["+# to Armour"] = true,
@@ -542,8 +560,8 @@ function M.drivers(desc)
 		if line.trade and line.value and line.kind ~= "enchant" and not FILLER[line.template] and not coveredByTotals(line.text) then
 			local priority = VALUABLE[line.template]
 			local goodTier = not line.tier or line.tier <= 3
-			if desc.isJewel and line.kind == "explicit" and line.tier and line.tier <= 3 then
-				priority = priority or 3
+			if desc.isJewel and line.kind == "explicit" then
+				priority = priority or JEWEL_VALUABLE[line.template]
 			end
 			if priority and goodTier and not (desc.isGear and line.template == "#% increased Attack Speed" and desc.isWeapon) then
 				local min = desc.isJewel and m_max(line.value - 1, m_floor(line.value * 0.85)) or m_floor(line.value * 0.9)
@@ -605,11 +623,15 @@ function M.uniqueRolls(desc)
 	return { out[1], out[2] }
 end
 
-local function filterFor(d, scale)
-	local min = d.min
-	if scale and min then
-		min = m_floor(d.value * scale)
+local function scaledMin(d, scale)
+	if scale and d.min and d.value and d.value >= SCALE_MIN_VALUE then
+		return m_min(d.min, m_floor(d.value * scale))
 	end
+	return d.min
+end
+
+local function filterFor(d, scale)
+	local min = scaledMin(d, scale)
 	if d.option ~= nil then
 		return { value = { option = d.option } }
 	end
@@ -655,7 +677,7 @@ function M.buildQuery(desc, drivers, status, scale)
 		if d.filter == "weapon" or d.filter == "armour" then
 			local group = d.filter .. "_filters"
 			filters[group] = filters[group] or { filters = { } }
-			filters[group].filters[d.field] = { min = scale and m_floor(d.value * scale) or d.min }
+			filters[group].filters[d.field] = { min = scaledMin(d, scale) }
 		elseif d.filter == "misc" then
 			for k, v in pairs(d.misc) do
 				misc()[k] = v
@@ -781,8 +803,16 @@ function M.nextSearch(plan, previous, total, summary, searchesDone)
 			end
 			return { step = "relaxed: dropped " .. active[#active].label, drivers = kept, query = M.buildQuery(desc, kept, plan.status) }
 		elseif total < 5 then
+			-- The two main filters, the big values at 80%. Skip it when that is the search just made.
 			local kept = { active[1], active[2] }
-			return { step = "relaxed: two main filters at 80%", drivers = kept, query = M.buildQuery(desc, kept, plan.status, 0.8), scaled = true }
+			local lowers = false
+			for _, d in ipairs(kept) do
+				lowers = lowers or scaledMin(d, 0.8) ~= d.min
+			end
+			if #active > 2 or lowers then
+				return { step = "relaxed: two main filters" .. (lowers and ", big values at 80%" or ""), drivers = kept,
+					query = M.buildQuery(desc, kept, plan.status, 0.8), scaled = true }
+			end
 		end
 		return nil
 	end
