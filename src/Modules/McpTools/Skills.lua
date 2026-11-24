@@ -555,6 +555,12 @@ local function editSpectres(build, args)
 	build:OpenSpectreLibrary()
 	local popup = main.popups[1]
 	local dest, source = popup.controls.list, popup.controls.source
+	-- The library opens on the recommended spectres only; tick its "Show All" box as a click does.
+	local showAll = popup.controls.sortMonsterCheckboxShowAll
+	if showAll and not showAll.state then
+		showAll.state = true
+		showAll.changeFunc(true)
+	end
 	local removals = args.remove_spectres or { }
 	if args.spectres then
 		removals = copyTable(dest.list)
