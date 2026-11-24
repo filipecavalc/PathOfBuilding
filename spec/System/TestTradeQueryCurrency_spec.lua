@@ -225,6 +225,33 @@ describe("TradeQuery Currency Conversion", function()
 			assert.are.equal(0.2, mock_tradeQuery.pbCurrencyConversion.pc.Standard.exalt)
 		end)
 
+		it("prices from the volumes traded, not the hour's most extreme trade", function()
+			mockCX({
+				-- One trade of 1 chaos for 1 divine in the hour (Covens, 2026-11-24).
+				{
+					league = "Standard",
+					market_pair = { CHAOS, DIVINE },
+					lowest_ratio = { [CHAOS] = 1, [DIVINE] = 1 },
+					volume_traded = { [CHAOS] = 15133913, [DIVINE] = 86724 },
+					highest_stock = { [CHAOS] = 769187, [DIVINE] = 6315 },
+				},
+				-- Without volumes, lowest_ratio is still used.
+				{
+					league = "Standard",
+					market_pair = { EXALT, DIVINE },
+					lowest_ratio = { [EXALT] = 10, [DIVINE] = 1 },
+					volume_traded = { [EXALT] = 0, [DIVINE] = 0 },
+					highest_stock = { [EXALT] = 100, [DIVINE] = 100 },
+				},
+			})
+
+			mock_tradeQuery:PullCXData()
+
+			local rates = mock_tradeQuery.pbCurrencyConversion.pc.Standard
+			assert.are.equal(86724 / 15133913, rates.chaos)
+			assert.are.equal(0.1, rates.exalt)
+		end)
+
 		it("skips listings with a zero ratio", function()
 			mockCX({
 				{
