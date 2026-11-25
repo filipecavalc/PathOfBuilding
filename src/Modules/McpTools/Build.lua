@@ -879,9 +879,9 @@ T.Tool {
 		if not described[1] and not hasConfig then
 			T.Fail("Nothing to simulate: give item/remove_item with slot, add_nodes, remove_nodes, toggle_flask or config.")
 		end
-		local output, config
+		local output, config, configUnchanged
 		if hasConfig then
-			output, config = T.WithConfigOptions(build, args.config, function()
+			output, config, configUnchanged = T.WithConfigOptions(build, args.config, function()
 				return calcFunc(override)
 			end)
 			for _, entry in ipairs(config) do
@@ -898,13 +898,18 @@ T.Tool {
 				t_insert(changes, line)
 			end
 		end
+		local note
+		if configUnchanged and configUnchanged[1] then
+			note = s_format("Config options already set to those values, so not simulated: %s.", t_concat(configUnchanged, ", "))
+		end
 		return {
-			simulated = described,
+			simulated = T.Array(described),
 			changes = T.Array(changes),
 			values = T.CompareValues(calcBase, output, args.fields or DEFAULT_FIELDS),
 			unmetRequirements = T.Array(T.UnmetRequirements(output)),
 			unmetRequirementsNow = T.Array(T.UnmetRequirements(calcBase)),
-			config = config and T.Array(config) or nil,
+			config = config and config[1] and T.Array(config) or nil,
+			note = note,
 		}
 	end,
 }

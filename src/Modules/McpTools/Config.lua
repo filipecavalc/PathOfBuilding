@@ -481,7 +481,7 @@ T.Tool {
 
 -- Runs fn with options set in the active config set, checked as config_set checks them, then puts the
 -- set's values and its modifier lists back. Nothing reaches the undo history or the unsaved-changes flag.
--- Returns fn's result and the options as { var, label, value, previous }.
+-- Returns fn's result, the options that changed as { var, label, value, previous }, and the vars that already had the value.
 function T.WithConfigOptions(build, optionsArg, fn)
 	local configTab = build.configTab
 	local input = configTab.configSets[configTab.activeConfigSetId].input
@@ -522,14 +522,19 @@ function T.WithConfigOptions(build, optionsArg, fn)
 		input[var] = value
 	end
 	configTab:BuildModList()
-	local described = { }
+	local described, unchanged = { }, { }
 	for _, entry in ipairs(changed) do
-		t_insert(described, { var = entry.option.var, label = entry.option.label, value = optionValue(configTab, entry.option), previous = entry.previous })
+		local value = optionValue(configTab, entry.option)
+		if value == entry.previous then
+			t_insert(unchanged, entry.option.var)
+		else
+			t_insert(described, { var = entry.option.var, label = entry.option.label, value = value, previous = entry.previous })
+		end
 	end
 	local ok, result = pcall(fn)
 	restore()
 	if not ok then
 		error(result, 0)
 	end
-	return result, described
+	return result, described, unchanged
 end

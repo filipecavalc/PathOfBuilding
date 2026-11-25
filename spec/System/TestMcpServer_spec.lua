@@ -314,6 +314,20 @@ describe("MCP server", function()
 			assert.are.equals(result.values.PhysicalDamageReduction.after, build.calcsTab.mainOutput.PhysicalDamageReduction)
 		end)
 
+		it("leaves out Config options that already have the value", function()
+			local input = build.configTab.configSets[build.configTab.activeConfigSetId].input
+			local result = callTool("simulate", { config = { enemyIsBoss = input.enemyIsBoss, useEnduranceCharges = true } })
+			assert.are.equals(1, #result.config)
+			assert.are.equals("useEnduranceCharges", result.config[1].var)
+			assert.are.equals(1, #result.simulated)
+			assert.is_truthy(result.note:find("enemyIsBoss", 1, true))
+
+			result = callTool("simulate", { config = { enemyIsBoss = input.enemyIsBoss } })
+			assert.is_nil(result.config)
+			assert.are.equals(0, #result.simulated)
+			assert.are.equals(0, #result.changes)
+		end)
+
 		it("rejects a Config option it cannot set, and changes nothing", function()
 			local input = build.configTab.configSets[build.configTab.activeConfigSetId].input
 			local before = copyTable(input)
