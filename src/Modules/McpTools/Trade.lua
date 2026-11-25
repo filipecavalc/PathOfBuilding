@@ -394,6 +394,7 @@ local searchCount = 0
 
 local tradeSearchInput = copyTable(QUERY_INPUT, true)
 tradeSearchInput.url = { type = "string", maxLength = 4000, description = "A pathofexile.com trade search link to run instead of generating one (the trader's 'Price Item' with a pasted link); results are measured in slot." }
+tradeSearchInput.query = { type = "object", description = "A ready trade site query to run instead of generating one: the object the trade site sends as 'query' (or the whole request with 'query' inside), for example {\"name\": \"Nebulis\", \"type\": \"Void Sceptre\", \"status\": {\"option\": \"securable\"}}. Sorted by price on the site; results are measured in slot. Needs league (or the trader's league)." }
 tradeSearchInput.pages = { type = "integer", minimum = 1, maximum = 10, description = "Result pages to fetch, 10 listings each (the trader's 'Fetch Pages', default 2)." }
 tradeSearchInput.sort_by = { type = "string", enum = { "stat_value", "stat_value_per_price", "price", "weighted_sum" }, description = "The trader's 'Sort By': stat_value (default, the weighted improvement PoB measures), stat_value_per_price, price (lowest first) or weighted_sum (the trade site's order)." }
 tradeSearchInput.enchant_mode = { type = "string", enum = { "Keep", "Copy Current", "Remove" }, description = "Weapons, amulet, belt: what to do with the listings' enchants or anoints before measuring them (the dialog's Enchant/Anoint Behaviour, default Keep)." }
@@ -405,8 +406,8 @@ T.Tool {
 	name = "trade_search",
 	title = "Search the trade site",
 	description = "Runs the search of Path of Building's trader on the pathofexile.com trade site and measures every listing on the open "
-		.. "build, as 'Find best' followed by the trader's search does: the weighted search trade_query describes (same options), or a "
-		.. "trade search link given in url. It needs Path of Building to be logged in to Path of Exile (Import/Export tab, 'Authorize "
+		.. "build, as 'Find best' followed by the trader's search does: the weighted search trade_query describes (same options), a "
+		.. "trade search link given in url, or a ready query (for example a unique by name, to compare every listing on the build). It needs Path of Building to be logged in to Path of Exile (Import/Export tab, 'Authorize "
 		.. "with Path of Exile'), uses PoB's request queue and rate limits, and only reads listings: nothing is bought, posted or sent "
 		.. "to sellers. Returns the listings sorted as the trader's 'Sort By' (default: highest stat value), each with its price (and "
 		.. "in divines when PoB has the currency rates), what equipping it would change on the side bar, the item text to use with "
@@ -425,8 +426,27 @@ T.Tool {
 			T.Fail("Path of Building is not logged in to Path of Exile, which the trader needs to search. Ask the user to log in from the "
 				.. "Import/Export tab ('Authorize with Path of Exile'); meanwhile trade_query gives a trade site link they can open.")
 		end
-		local row, slot, weights, generated, realm, league
-		if args.url then
+		local row, slot, weights, generated, realm, league, readyQuery
+		if args.url and args.query then
+			T.Fail("Give url or query, not both.")
+		end
+		if args.query then
+			if type(args.query) ~= "table" then
+				T.Fail("query must be a trade site query object.")
+			end
+			readyQuery = copyTable(type(args.query.query) == "table" and args.query.query or args.query)
+			-- The listing links (TradeQuery:BuildListingSearchUrl) read the first stat group.
+			if type(readyQuery.stats) ~= "table" or not readyQuery.stats[1] then
+				readyQuery.stats = { { type = "and", filters = { } } }
+			end
+			league = checkLeague(args.league or tradeQuery.pbLeague)
+			if not league then
+				T.Fail("Pass league, for example 'Standard' or the current league.")
+			end
+			realm = args.realm or (tradeQuery.pbRealm ~= "" and tradeQuery.pbRealm) or "pc"
+			row, slot = tradeRow(build, args)
+			weights = chosenWeights(args, tradeQuery)
+		elseif args.url then
 			if not args.url:match("^https://") and not args.url:match("^www%.") and not args.url:match("^pathofexile") then
 				T.Fail("url must be a pathofexile.com trade search link.")
 			end
@@ -591,7 +611,16 @@ T.Tool {
 					}
 				end)
 			end
-			if args.url then
+			if readyQuery then
+				local body = dkjson.encode({ query = readyQuery, sort = { price = "asc" }, engine = "new" })
+				requests:SearchWithQuery(realm, league, body, function(items, errMsg)
+					onResults(items, errMsg, body)
+				end, {
+					callbackQueryId = function(queryId)
+						searchUrl = requests:buildUrl(tradeQuery.hostName .. "trade/search", realm, league, queryId)
+					end,
+				})
+			elseif args.url then
 				searchUrl = args.url
 				requests:SearchWithURL(args.url, onResults)
 			else

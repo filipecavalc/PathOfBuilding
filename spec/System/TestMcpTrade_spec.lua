@@ -159,6 +159,43 @@ describe("MCP trade tools", function()
 		assert.is_truthy(result.notes[1]:find("Currency rates", 1, true))
 	end)
 
+	it("runs a ready query, sorted by price, and measures the listings on the build", function()
+		api.authToken = "test-token"
+		callTool("items_equip", { action = "equip", slot = "Helmet", item = HELMET })
+		build:ResetModFlags()
+		local result = callTool("trade_search", { slot = "Helmet", league = "Standard", pages = 1,
+			query = { type = "Iron Hat", status = { option = "securable" } } })
+
+		local search
+		for _, request in ipairs(requests) do
+			if request.url:find("api/trade/search/", 1, true) then
+				search = request
+			end
+		end
+		assert.are.equals("https://www.pathofexile.com/api/trade/search/Standard", search.url)
+		local sent = dkjson.decode(search.params.body)
+		assert.are.same({ price = "asc" }, sent.sort)
+		assert.are.equals("Iron Hat", sent.query.type)
+		assert.are.same({ option = "securable" }, sent.query.status)
+		assert.are.equals("and", sent.query.stats[1].type)
+
+		-- The boots do not fit the slot; the helmets are measured as for any search.
+		assert.are.equals(2, result.found)
+		assert.are.equals("Fine Hat, Iron Hat", result.listings[1].name)
+		assert.is_truthy(table.concat(result.listings[1].changes, "\n"):find("Life", 1, true))
+		assert.is_truthy(result.listings[2].listingUrl:find("^https://www%.pathofexile%.com/trade/search/Standard/"))
+		assert.are.equals("https://www.pathofexile.com/trade/search/Standard/query1", result.searchUrl)
+		assert.is_false(build.modFlag)
+		assert.are.same({ }, frameFuncKeys())
+
+		-- The whole request is accepted too; url and query together are not.
+		result = callTool("trade_search", { slot = "Helmet", league = "Standard", pages = 1, query = { query = { type = "Iron Hat" } } })
+		assert.are.equals(2, result.found)
+		local message = toolError("trade_search", { slot = "Helmet", league = "Standard", query = { type = "Iron Hat" },
+			url = "https://www.pathofexile.com/trade/search/Standard/abc" })
+		assert.is_truthy(message:find("not both", 1, true))
+	end)
+
 	it("reports a search that finds nothing, and rejects links from elsewhere", function()
 		api.authToken = "test-token"
 		launch.DownloadPage = function(_, url, callback)
