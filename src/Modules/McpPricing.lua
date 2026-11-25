@@ -1035,14 +1035,14 @@ function M.summarise(listings, rates, total, relaxed)
 		return out
 	end
 	local p25 = percentile(values, 0.25)
-	local valid, outliers = { }, 0
+	-- Listings far below the rest still count (they can be bought now); they are only pointed out.
+	local outliers = 0
 	for _, v in ipairs(values) do
 		if #values >= 4 and v < 0.5 * p25 then
 			outliers = outliers + 1
-		else
-			t_insert(valid, v)
 		end
 	end
+	local valid = values
 	out.lowOutliers = outliers
 	out.min = values[1]
 	out.p25 = p25
@@ -1052,7 +1052,8 @@ function M.summarise(listings, rates, total, relaxed)
 	end
 	out.median = percentile(cheapest10, 0.5)
 	out.p75 = percentile(valid, 0.75)
-	local quick = #valid >= 4 and valid[2] or valid[1]
+	-- A quick sale matches the cheapest comparable listing.
+	local quick = values[1]
 	local fair = out.median
 	local ceiling = (total and total <= M.FETCH_COUNT) and percentile(values, 0.75) or out.p75
 	out.quick, out.fair, out.ceiling = quick, fair, m_max(ceiling or fair, fair)
@@ -1073,7 +1074,7 @@ function M.summarise(listings, rates, total, relaxed)
 	if fresh < 5 then t_insert(why, "few listings from the last 48 hours (" .. fresh .. ")") end
 	if stale > 0 then t_insert(why, stale .. " listing(s) still unsold after a week at that price") end
 	if walls[1] then t_insert(why, #walls .. " account(s) with 3+ listings counted once") end
-	if outliers > 0 then t_insert(why, outliers .. " listing(s) under half the p25 left out of the quick sale") end
+	if outliers > 0 then t_insert(why, outliers .. " listing(s) under half the p25: check they are really comparable") end
 	if (relaxed or 0) > 0 then t_insert(why, "search loosened " .. relaxed .. " time(s)") end
 	out.confidence, out.why = level, why
 	return out
