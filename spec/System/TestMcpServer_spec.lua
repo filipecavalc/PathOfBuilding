@@ -287,6 +287,43 @@ describe("MCP server", function()
 			assert.is_nil(build.spec.allocNodes[target.id])
 		end)
 
+		it("simulates Config options as config_set would apply them, and puts the config back", function()
+			local configTab = build.configTab
+			local input = configTab.configSets[configTab.activeConfigSetId].input
+			assert.is_falsy(input.useEnduranceCharges)
+			local boss = input.enemyIsBoss
+			assert.are_not.equals("Boss", boss)
+			local undoCount = #configTab.undo
+			local modList = configTab.modList
+			local result = callTool("simulate", { config = { useEnduranceCharges = true, enemyIsBoss = "Standard Boss" },
+				fields = { "EnduranceCharges", "PhysicalDamageReduction" } })
+			assert.are.equals(2, #result.config)
+			assert.are.equals("Standard Boss", result.config[1].value)
+			assert.is_true(result.config[2].value)
+			assert.is_truthy(result.values.EnduranceCharges.after > result.values.EnduranceCharges.before)
+			-- The build's config, its undo history and its unsaved flag did not change.
+			assert.is_falsy(input.useEnduranceCharges)
+			assert.are.equals(boss, input.enemyIsBoss)
+			assert.are.equals(undoCount, #configTab.undo)
+			assert.are_not.equals(modList, configTab.modList)
+			assert.is_false(build.modFlag)
+			-- The same values as setting the options.
+			callTool("config_set", { options = { useEnduranceCharges = true, enemyIsBoss = "Boss" } })
+			runCallback("OnFrame")
+			assert.are.equals(result.values.EnduranceCharges.after, build.calcsTab.mainOutput.EnduranceCharges)
+			assert.are.equals(result.values.PhysicalDamageReduction.after, build.calcsTab.mainOutput.PhysicalDamageReduction)
+		end)
+
+		it("rejects a Config option it cannot set, and changes nothing", function()
+			local input = build.configTab.configSets[build.configTab.activeConfigSetId].input
+			local before = copyTable(input)
+			local message = toolError("simulate", { config = { enemyIsBoss = "Huge" } })
+			assert.is_truthy(message:find("Guardian/Pinnacle Boss", 1, true))
+			message = toolError("simulate", { config = { noSuchOption = true } })
+			assert.is_truthy(message:find("noSuchOption", 1, true))
+			assert.are.same(before, input)
+		end)
+
 		it("exports XML that opens as the same build", function()
 			-- (Deflate and Inflate are stubs when running headless, so share codes are covered by hand.)
 			callTool("build_edit", { level = 87 })

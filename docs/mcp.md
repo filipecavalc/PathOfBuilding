@@ -63,7 +63,7 @@ Tools are grouped by the part of the window they work on. Read-only tools are ma
 | | `build_notes` | A build's notes (Notes tab): the open build, a saved build, a code or a build link |
 | Side bar | `build_stats` | The side bar as shown, warnings, raw output values |
 | | `build_edit` | Character level and notes |
-| Calcs | `simulate` | What an item, passives or a flask would change, without changing the build |
+| Calcs | `simulate` | What an item, passives, a flask or Config options would change, without changing the build |
 | | `calcs_breakdown` | Calcs tab cells and the breakdown of a stat |
 | Tree | `tree_get` | Class, ascendancy, points, keystones, notables, masteries, jewels, specs |
 | | `tree_search` | PoB's tree search, with the points needed to reach each node |

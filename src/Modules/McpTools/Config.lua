@@ -474,3 +474,62 @@ T.Tool {
 		return result
 	end,
 }
+
+------------------------------------------------------------------------------
+-- Temporary options, for simulate
+------------------------------------------------------------------------------
+
+-- Runs fn with options set in the active config set, checked as config_set checks them, then puts the
+-- set's values and its modifier lists back. Nothing reaches the undo history or the unsaved-changes flag.
+-- Returns fn's result and the options as { var, label, value, previous }.
+function T.WithConfigOptions(build, optionsArg, fn)
+	local configTab = build.configTab
+	local input = configTab.configSets[configTab.activeConfigSetId].input
+	local keys = { }
+	for key in pairs(optionsArg) do
+		t_insert(keys, key)
+	end
+	table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+	local values, changed = { }, { }
+	for _, key in ipairs(keys) do
+		local option, err = findOption(key)
+		if not option then
+			T.Fail("Config option '%s': %s.", tostring(key), err)
+		end
+		local varData = option.varData
+		local value, reason = checkValue(varData, optionsArg[key])
+		if value == nil then
+			T.Fail("Config option %s %s%s.", option.var, reason,
+				varData.type == "list" and (" (choices: " .. t_concat(listChoices(varData), ", ") .. ")") or "")
+		end
+		if varData.type == "list" then
+			value = varData.list[value].val
+		elseif varData.type == "text" then
+			value = T.Sanitise((value:gsub("\r\n", "\n")))
+		end
+		values[option.var] = value
+		t_insert(changed, { option = option, previous = optionValue(configTab, option) })
+	end
+	local saved = copyTable(input, true)
+	local function restore()
+		wipeTable(input)
+		for k, v in pairs(saved) do
+			input[k] = v
+		end
+		configTab:BuildModList()
+	end
+	for var, value in pairs(values) do
+		input[var] = value
+	end
+	configTab:BuildModList()
+	local described = { }
+	for _, entry in ipairs(changed) do
+		t_insert(described, { var = entry.option.var, label = entry.option.label, value = optionValue(configTab, entry.option), previous = entry.previous })
+	end
+	local ok, result = pcall(fn)
+	restore()
+	if not ok then
+		error(result, 0)
+	end
+	return result, described
+end

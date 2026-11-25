@@ -774,8 +774,10 @@ T.Tool {
 	name = "simulate",
 	title = "Simulate a change",
 	description = "Calculates what a change would do to the open build, without changing it: equipping an item (its text, as "
-		.. "copied from the game or PoB) in a slot or removing one, allocating or removing passive nodes, and switching a flask on "
-		.. "or off; any of these can be combined in one call (one item per call). It uses PoB's own what-if calculator, the same "
+		.. "copied from the game or PoB) in a slot or removing one, allocating or removing passive nodes, switching a flask on "
+		.. "or off, and setting Config tab options for the calculation only (config: same vars and values as config_set, for example "
+		.. "{\"useEnduranceCharges\": true, \"enemyIsBoss\": \"Pinnacle\"}; the build's config is put back after); any of these can be "
+		.. "combined in one call (one item per call). It uses PoB's own what-if calculator, the same "
 		.. "one behind its hover tooltips: 'changes' lists the side-bar stats that change, as PoB words them in tooltips, 'values' gives "
 		.. "raw before/after numbers, and 'unmetRequirements' lists attribute requirements the result would not meet. Adding a node "
 		.. "also adds the path to it, as clicking it on the tree would. Use it to rank items or passives before recommending them.",
@@ -788,6 +790,7 @@ T.Tool {
 		add_nodes = { type = "array", items = { type = { "string", "integer" } }, maxItems = 50, description = "Passive nodes to allocate (names or ids)." },
 		remove_nodes = { type = "array", items = { type = { "string", "integer" } }, maxItems = 50, description = "Allocated passive nodes to remove (with the nodes that depend on them)." },
 		toggle_flask = { type = "integer", minimum = 1, maximum = 5, description = "Flask slot number to switch on or off. With 'item' in that slot, the new flask is switched." },
+		config = { type = "object", description = "Config tab options to use for this calculation only: { var or exact label: value }, checked as config_set checks them (config_get lists the vars and choices)." },
 		fields = { type = "array", items = { type = "string" }, maxItems = 100, description = "Output fields to report before/after (default: key offence and defence fields)." },
 	},
 	run = function(args)
@@ -872,10 +875,21 @@ T.Tool {
 			override.toggleFlask = flask
 			t_insert(described, (active and "switch off " or "switch on ") .. flask.name)
 		end
-		if not described[1] then
-			T.Fail("Nothing to simulate: give item/remove_item with slot, add_nodes, remove_nodes or toggle_flask.")
+		local hasConfig = type(args.config) == "table" and next(args.config) ~= nil
+		if not described[1] and not hasConfig then
+			T.Fail("Nothing to simulate: give item/remove_item with slot, add_nodes, remove_nodes, toggle_flask or config.")
 		end
-		local output = calcFunc(override)
+		local output, config
+		if hasConfig then
+			output, config = T.WithConfigOptions(build, args.config, function()
+				return calcFunc(override)
+			end)
+			for _, entry in ipairs(config) do
+				t_insert(described, s_format("set %s to %s (now %s)", entry.label, tostring(entry.value), tostring(entry.previous)))
+			end
+		else
+			output = calcFunc(override)
+		end
 		local collector = T.LineCollector()
 		build:AddStatComparesToTooltip(collector, calcBase, output, "Changes:")
 		local changes = { }
@@ -890,6 +904,7 @@ T.Tool {
 			values = T.CompareValues(calcBase, output, args.fields or DEFAULT_FIELDS),
 			unmetRequirements = T.Array(T.UnmetRequirements(output)),
 			unmetRequirementsNow = T.Array(T.UnmetRequirements(calcBase)),
+			config = config and T.Array(config) or nil,
 		}
 	end,
 }
