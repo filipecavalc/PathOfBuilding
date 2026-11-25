@@ -397,4 +397,24 @@ describe("MCP pricing", function()
 		assert.is_true(pricing.isCheap({ total = 3455, fair = 1, p75 = 2 }))
 		assert.is_false(pricing.isCheap({ total = 726, fair = 62, p75 = 70 }) or false)
 	end)
+
+	it("lowers the confidence when tightening moves the median far from the broader search's", function()
+		-- The Varnished Coat of 2026-11-18: the broader search's median was under 10c, the tightened one 176c.
+		local summary = { median = 176, confidence = "medium", why = { } }
+		pricing.checkTightening(summary, { median = 8 }, "tightened: +Item Rarity")
+		assert.are.equals("low", summary.confidence)
+		assert.is_truthy(summary.why[1]:find("22x", 1, true))
+		assert.is_truthy(summary.why[1]:find("8 -> 175", 1, true))
+
+		local high = { median = 60, confidence = "high", why = { } }
+		pricing.checkTightening(high, { median = 10 }, "tightened")
+		assert.are.equals("medium", high.confidence)
+
+		-- A small rise, or no broader median, changes nothing.
+		local steady = { median = 40, confidence = "high", why = { } }
+		pricing.checkTightening(steady, { median = 10 }, "tightened")
+		pricing.checkTightening(steady, { }, "tightened")
+		assert.are.equals("high", steady.confidence)
+		assert.are.equals(0, #steady.why)
+	end)
 end)

@@ -810,6 +810,14 @@ T.Tool {
 					return out
 				end
 				local summary = pricing.summarise(chosen.listings, rates, chosen.total, relaxed)
+				if chosen.search.tightened then
+					-- Compare with the broader search it tightened.
+					local index = isValueInArray(results, chosen)
+					local broader = index and index > 1 and results[index - 1]
+					if broader then
+						pricing.checkTightening(summary, pricing.summarise(broader.listings, rates, broader.total, relaxed), chosen.search.step)
+					end
+				end
 				out.verdict = pricing.isCheap(summary) and "cheap" or "price"
 				if summary.fair then
 					out.price = {

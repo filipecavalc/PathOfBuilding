@@ -1083,6 +1083,24 @@ function M.summarise(listings, rates, total, relaxed)
 	return out
 end
 
+-- A tightened search whose median is more than this many times the broader search's rests the price on the mod it added.
+M.TIGHTEN_JUMP = 5
+
+--- Lower the confidence of a summary from a tightened search when it moved the median far from the broader search's.
+function M.checkTightening(summary, broader, step)
+	if not (summary.median and broader and broader.median and broader.median > 0) then
+		return
+	end
+	local ratio = summary.median / broader.median
+	if ratio <= M.TIGHTEN_JUMP then
+		return
+	end
+	summary.confidence = summary.confidence == "high" and "medium" or "low"
+	summary.why = summary.why or { }
+	t_insert(summary.why, string.format("the '%s' search put the median at %.0fx the broader search's (%s -> %s chaos): "
+		.. "the price rests on that mod, so check it by hand", step, ratio, M.roundChaos(broader.median), M.roundChaos(summary.median)))
+end
+
 --- Is this an item worth only a few chaos, judged on the summary of a broad search?
 function M.isCheap(summary)
 	return (summary.total or 0) >= 50 and summary.fair and summary.fair <= M.CHEAP_CHAOS
