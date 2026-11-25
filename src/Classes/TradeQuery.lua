@@ -213,11 +213,12 @@ function TradeQueryClass:PullCXData(realm)
 
 					local fromShort = currencyNames[fromID]
 					local toShort = currencyNames[toID]
-					-- The volumes traded give the hour's average rate; lowest_ratio is its most extreme trade, and a
-					-- single odd trade (1 chaos for 1 divine) moves it. Use lowest_ratio only without volumes.
+					-- volume_traded gives the hour's average rate. lowest_ratio is only one end of the hour's range (the
+					-- lowest market_pair[1]:market_pair[2] rate), so it leans one way depending on the pair's order, and
+					-- a single odd trade moves it. Use lowest_ratio only when there are no volumes.
 					local volume = entry.volume_traded
 					local ratio = (volume and (volume[fromID] or 0) > 0 and (volume[toID] or 0) > 0) and volume or entry.lowest_ratio
-					if not fromShort or not generalCurrencies[toID] or not ratio[fromID] or ratio[fromID] == 0 then
+					if not fromShort or not generalCurrencies[toID] or not ratio or not ratio[fromID] or ratio[fromID] == 0 or not ratio[toID] then
 						goto CXContinue
 					end
 
