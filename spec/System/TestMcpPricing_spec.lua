@@ -371,7 +371,20 @@ describe("MCP pricing", function()
 		assert.is_truthy(message:find("Ctrl+Alt+C", 1, true))
 	end)
 
-	it("summarises listings: one per account, fresh first, outliers out of the quick sale", function()
+	it("counts old Instant Buyout listings: they can be bought now", function()
+		local now = os.time()
+		local function l(amount, account, hours)
+			return pricing.parseListing({ id = account, listing = { price = { amount = amount, currency = "chaos", type = "~b/o" },
+				account = { name = account }, indexed = os.date("!%Y-%m-%dT%H:%M:%SZ", now - hours * 3600) } }, now)
+		end
+		-- The ring of 2026-11-25: 85c listed 85 hours ago, the recent ones from 90c up.
+		local listings = { l(85, "old", 85), l(90, "a", 30), l(100, "b", 22), l(150, "c", 10), l(170, "d", 5), l(175, "e", 3), l(175, "f", 2) }
+		local s = pricing.summarise(listings, { chaos = 1 }, 7, 0)
+		assert.are.equals(85, s.min)
+		assert.are.equals(90, s.quick)
+	end)
+
+	it("summarises listings: one per account, outliers out of the quick sale", function()
 		local now = os.time()
 		local function l(amount, currency, account, hours)
 			return pricing.parseListing({ id = account .. amount, listing = {

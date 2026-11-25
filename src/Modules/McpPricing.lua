@@ -1015,25 +1015,21 @@ function M.summarise(listings, rates, total, relaxed)
 			t_insert(unique, l)
 		end
 	end
+	-- Every listing counts, whatever its age: the searches are Instant Buyout only, so any of them can be bought
+	-- now, seller online or not. The age only tells how active the market is.
 	local fresh, stale = 0, 0
-	local freshList = { }
+	local values = { }
 	for _, l in ipairs(unique) do
 		if l.hours and l.hours <= M.FRESH_HOURS then
 			fresh = fresh + 1
-			t_insert(freshList, l)
 		elseif l.hours and l.hours > M.STALE_HOURS then
 			stale = stale + 1
 		end
-	end
-	local useFresh = fresh >= 5
-	local pool = useFresh and freshList or unique
-	local values = { }
-	for _, l in ipairs(pool) do
 		t_insert(values, l.chaos)
 	end
 	local out = {
 		total = total, fetched = #listings, priced = #priced, accounts = accounts, fresh = fresh, stale = stale,
-		walls = walls, usedFreshOnly = useFresh, skippedCurrencies = next(skipped) and skipped or nil,
+		walls = walls, skippedCurrencies = next(skipped) and skipped or nil,
 	}
 	if not values[1] then
 		return out
@@ -1075,7 +1071,7 @@ function M.summarise(listings, rates, total, relaxed)
 	if (total or 0) < 8 then t_insert(why, "few comparable listings (" .. tostring(total) .. ")") end
 	if spread > 2.5 then t_insert(why, string.format("prices spread widely (p75/p25 = %.1f)", spread)) end
 	if fresh < 5 then t_insert(why, "few listings from the last 48 hours (" .. fresh .. ")") end
-	if stale > 0 then t_insert(why, stale .. " cheap listing(s) older than a week, maybe unsold") end
+	if stale > 0 then t_insert(why, stale .. " listing(s) still unsold after a week at that price") end
 	if walls[1] then t_insert(why, #walls .. " account(s) with 3+ listings counted once") end
 	if outliers > 0 then t_insert(why, outliers .. " listing(s) under half the p25 left out of the quick sale") end
 	if (relaxed or 0) > 0 then t_insert(why, "search loosened " .. relaxed .. " time(s)") end
